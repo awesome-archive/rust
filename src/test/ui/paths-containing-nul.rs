@@ -1,7 +1,6 @@
 // run-pass
 
 #![allow(deprecated)]
-// ignore-cloudabi no files or I/O
 // ignore-wasm32-bare no files or I/O
 // ignore-emscripten no files
 // ignore-sgx no files
@@ -17,7 +16,7 @@ fn assert_invalid_input<T>(on: &str, result: io::Result<T>) {
                               "{} returned a strange {:?} on a path with NUL", on, e.kind()),
         }
     }
-    inner(on, result.map(|_| ()))
+    inner(on, result.map(drop))
 }
 
 fn main() {

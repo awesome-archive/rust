@@ -11,9 +11,6 @@ fn in_return() -> impl Debug { panic!() }
 // Allowed
 fn in_adt_in_parameters(_: Vec<impl Debug>) { panic!() }
 
-// Allowed
-fn in_adt_in_return() -> Vec<impl Debug> { panic!() }
-
 // Disallowed
 fn in_fn_parameter_in_parameters(_: fn(impl Debug)) { panic!() }
 //~^ ERROR `impl Trait` not allowed outside of function and inherent method return types
@@ -58,11 +55,13 @@ fn in_impl_Fn_return_in_parameters(_: &impl Fn() -> impl Debug) { panic!() }
 // Disallowed
 fn in_impl_Fn_parameter_in_return() -> &'static impl Fn(impl Debug) { panic!() }
 //~^ ERROR `impl Trait` not allowed outside of function and inherent method return types
-//~^^ ERROR nested `impl Trait` is not allowed
+//~| ERROR nested `impl Trait` is not allowed
+//~| ERROR cannot resolve opaque type
 
 // Disallowed
 fn in_impl_Fn_return_in_return() -> &'static impl Fn() -> impl Debug { panic!() }
 //~^ ERROR `impl Trait` not allowed outside of function and inherent method return types
+//~| ERROR cannot resolve opaque type
 
 // Disallowed
 fn in_Fn_parameter_in_generics<F: Fn(impl Debug)> (_: F) { panic!() }
@@ -161,6 +160,7 @@ type InTypeAlias<R> = impl Debug;
 
 type InReturnInTypeAlias<R> = fn() -> impl Debug;
 //~^ ERROR `impl Trait` not allowed outside of function and inherent method return types
+//~| ERROR `impl Trait` in type aliases is unstable
 
 // Disallowed in impl headers
 impl PartialEq<impl Debug> for () {

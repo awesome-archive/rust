@@ -1,11 +1,8 @@
 // run-pass
 #![allow(dead_code)]
 #![allow(unused_variables)]
-#![allow(unions_with_drop_fields)]
 
 // Some traits can be derived for unions.
-
-#![feature(untagged_unions)]
 
 #[derive(
     Copy,
@@ -24,11 +21,11 @@ impl PartialEq for U { fn eq(&self, rhs: &Self) -> bool { true } }
     Copy,
     Eq
 )]
-union W<T> {
+union W<T: Copy> {
     a: T,
 }
 
-impl<T> PartialEq for W<T> { fn eq(&self, rhs: &Self) -> bool { true } }
+impl<T: Copy> PartialEq for W<T> { fn eq(&self, rhs: &Self) -> bool { true } }
 
 fn main() {
     let u = U { b: 0 };

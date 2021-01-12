@@ -9,6 +9,8 @@ pub fn main() {
     let mut _ = 0; //~ ERROR `mut` must be followed by a named binding
     let mut (_, _) = (0, 0); //~ ERROR `mut` must be followed by a named binding
 
+    let mut (x @ y) = 0; //~ ERROR `mut` must be attached to each individual binding
+
     let mut mut x = 0;
     //~^ ERROR `mut` on a binding may not be repeated
     //~| remove the additional `mut`s
@@ -28,7 +30,7 @@ pub fn main() {
     //~| ERROR `mut` must be attached to each individual binding
     //~| ERROR expected identifier, found reserved keyword `yield`
     //~| ERROR expected identifier, found reserved keyword `become`
-    //~| ERROR expected identifier, found reserved keyword `await`
+    //~| ERROR expected identifier, found keyword `await`
 
     struct W<T, U>(T, U);
     struct B { f: Box<u8> }

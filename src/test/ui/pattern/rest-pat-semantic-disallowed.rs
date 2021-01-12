@@ -2,7 +2,7 @@
 // outside of slice (+ ident patterns witin those), tuple,
 // and tuple struct patterns and that duplicates are caught in these contexts.
 
-#![feature(slice_patterns, box_patterns)]
+#![feature(box_patterns)]
 
 fn main() {}
 
@@ -31,6 +31,7 @@ fn rest_patterns() {
 
     // Ident patterns:
     let x @ ..; //~ ERROR `..` patterns are not allowed here
+    //~^ ERROR type annotations needed
     let ref x @ ..; //~ ERROR `..` patterns are not allowed here
     let ref mut x @ ..; //~ ERROR `..` patterns are not allowed here
 

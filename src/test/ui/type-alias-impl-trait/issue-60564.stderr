@@ -1,25 +1,14 @@
-error[E0601]: `main` function not found in crate `issue_60564`
+error: non-defining opaque type use in defining scope
+  --> $DIR/issue-60564.rs:19:34
    |
-   = note: consider adding a `main` function to `$DIR/issue-60564.rs`
-
-error: type parameter `E` is part of concrete type but not used in parameter list for the `impl Trait` type alias
-  --> $DIR/issue-60564.rs:20:49
+LL |     fn iter_bits(self, n: u8) -> Self::BitsIter {
+   |                                  ^^^^^^^^^^^^^^
    |
-LL |       fn iter_bits(self, n: u8) -> Self::BitsIter {
-   |  _________________________________________________^
-LL | |
-LL | |         (0u8..n)
-LL | |             .rev()
-LL | |             .map(move |shift| ((self >> T::from(shift)) & T::from(1)).try_into().unwrap())
-LL | |     }
-   | |_____^
-
-error: could not find defining uses
-  --> $DIR/issue-60564.rs:8:1
+note: used non-generic type `u8` for generic parameter
+  --> $DIR/issue-60564.rs:8:25
    |
 LL | type IterBitsIter<T, E, I> = impl std::iter::Iterator<Item = I>;
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |                         ^
 
-error: aborting due to 3 previous errors
+error: aborting due to previous error
 
-For more information about this error, try `rustc --explain E0601`.

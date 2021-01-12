@@ -1,5 +1,4 @@
 // run-pass
-// ignore-cloudabi no processes
 // ignore-emscripten no processes
 // ignore-sgx no processes
 
@@ -10,7 +9,7 @@ fn check_for_no_backtrace(test: std::process::Output) {
 
     assert_eq!(it.next().map(|l| l.starts_with("thread '<unnamed>' panicked at")), Some(true));
     assert_eq!(it.next(), Some("note: run with `RUST_BACKTRACE=1` \
-                                environment variable to display a backtrace."));
+                                environment variable to display a backtrace"));
     assert_eq!(it.next().map(|l| l.starts_with("thread 'main' panicked at")), Some(true));
     assert_eq!(it.next(), None);
 }

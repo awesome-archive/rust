@@ -8,7 +8,7 @@
 // check-pass
 // dont-check-compiler-stdout - don't check for any AST change.
 
-#![feature(asm)]
+#![feature(llvm_asm)]
 
 enum V {
     A(i32),
@@ -30,7 +30,7 @@ fn main() {
         target_arch = "x86_64",
         target_arch = "arm",
         target_arch = "aarch64"))]
-    unsafe { asm!(""::::); }
+    unsafe { llvm_asm!(""::::); }
 
     let x: (i32) = 35;
     let y = x as i64<> + 5;
@@ -38,4 +38,27 @@ fn main() {
     call_println!(y);
 
     struct A;
+}
+
+// Regressions tests for issues #78398 and #78510 (captured tokens in associated and foreign items)
+
+struct S;
+
+macro_rules! mac_extern {
+    ($i:item) => {
+        extern "C" { $i }
+    }
+}
+macro_rules! mac_assoc {
+    ($i:item) => {
+        impl S { $i }
+        trait Bar { $i }
+    }
+}
+
+mac_extern! {
+    fn foo();
+}
+mac_assoc! {
+    fn foo() {}
 }

@@ -1,4 +1,3 @@
-// compile-fail
 // edition:2018
 // compile-flags: --crate-type lib
 
@@ -8,7 +7,7 @@ async fn no_non_guaranteed_initialization(x: usize) -> usize {
         y = echo(10).await;
     }
     y
-    //~^ use of possibly uninitialized variable: `y`
+    //~^ use of possibly-uninitialized variable: `y`
 }
 
 async fn echo(x: usize) -> usize { x + 1 }

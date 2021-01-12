@@ -1,12 +1,10 @@
 // run-pass
 #![allow(dead_code)]
 #![allow(unused_variables)]
-#![allow(unions_with_drop_fields)]
 
 // Drop works for union itself.
 
-#![feature(untagged_unions)]
-
+#[derive(Copy, Clone)]
 struct S;
 
 union U {
@@ -19,12 +17,6 @@ union W {
 
 union Y {
     a: S,
-}
-
-impl Drop for S {
-    fn drop(&mut self) {
-        unsafe { CHECK += 10; }
-    }
 }
 
 impl Drop for U {
@@ -51,10 +43,15 @@ fn main() {
         {
             let w = W { a: S };
         }
-        assert_eq!(CHECK, 2); // 2, not 11, dtor of S is not called
+        assert_eq!(CHECK, 2); // 2, dtor of W is called
         {
             let y = Y { a: S };
         }
-        assert_eq!(CHECK, 2); // 2, not 12, dtor of S is not called
+        assert_eq!(CHECK, 2); // 2, Y has no dtor
+        {
+            let u2 = U { a: 1 };
+            std::mem::forget(u2);
+        }
+        assert_eq!(CHECK, 2); // 2, dtor of U *not* called for u2
     }
 }

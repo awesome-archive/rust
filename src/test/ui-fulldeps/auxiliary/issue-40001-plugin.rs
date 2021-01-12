@@ -1,56 +1,58 @@
 #![feature(box_syntax, plugin, plugin_registrar, rustc_private)]
 #![crate_type = "dylib"]
 
-#[macro_use]
-extern crate rustc;
+extern crate rustc_ast_pretty;
 extern crate rustc_driver;
-extern crate syntax;
+extern crate rustc_hir;
+#[macro_use]
+extern crate rustc_lint;
+#[macro_use]
+extern crate rustc_session;
+extern crate rustc_span;
+extern crate rustc_ast;
 
+use rustc_ast_pretty::pprust;
 use rustc_driver::plugin::Registry;
-use syntax::attr;
-use syntax::ext::base::*;
-use syntax::feature_gate::AttributeType::Whitelisted;
-use syntax::symbol::Symbol;
-
-use rustc::hir;
-use rustc::hir::intravisit;
-use rustc::hir::map as hir_map;
-use hir::Node;
-use rustc::lint::{LateContext, LintPass, LintArray, LateLintPass, LintContext};
-use rustc::ty;
-use syntax::{ast, source_map};
+use rustc_hir as hir;
+use rustc_hir::intravisit;
+use rustc_hir::Node;
+use rustc_lint::{LateContext, LateLintPass, LintArray, LintContext, LintPass};
+use rustc_span::source_map;
 
 #[plugin_registrar]
 pub fn plugin_registrar(reg: &mut Registry) {
-    reg.register_late_lint_pass(box MissingWhitelistedAttrPass);
-    reg.register_attribute(Symbol::intern("whitelisted_attr"), Whitelisted);
+    reg.lint_store.register_lints(&[&MISSING_ALLOWED_ATTR]);
+    reg.lint_store.register_late_pass(|| box MissingAllowedAttrPass);
 }
 
 declare_lint! {
-    MISSING_WHITELISTED_ATTR,
+    MISSING_ALLOWED_ATTR,
     Deny,
-    "Checks for missing `whitelisted_attr` attribute"
+    "Checks for missing `allowed_attr` attribute"
 }
 
-declare_lint_pass!(MissingWhitelistedAttrPass => [MISSING_WHITELISTED_ATTR]);
+declare_lint_pass!(MissingAllowedAttrPass => [MISSING_ALLOWED_ATTR]);
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MissingWhitelistedAttrPass {
-    fn check_fn(&mut self,
-                cx: &LateContext<'a, 'tcx>,
-                _: intravisit::FnKind<'tcx>,
-                _: &'tcx hir::FnDecl,
-                _: &'tcx hir::Body,
-                span: source_map::Span,
-                id: hir::HirId) {
-
+impl<'tcx> LateLintPass<'tcx> for MissingAllowedAttrPass {
+    fn check_fn(
+        &mut self,
+        cx: &LateContext<'tcx>,
+        _: intravisit::FnKind<'tcx>,
+        _: &'tcx hir::FnDecl,
+        _: &'tcx hir::Body,
+        span: source_map::Span,
+        id: hir::HirId,
+    ) {
         let item = match cx.tcx.hir().get(id) {
             Node::Item(item) => item,
             _ => cx.tcx.hir().expect_item(cx.tcx.hir().get_parent_item(id)),
         };
 
-        if !attr::contains_name(&item.attrs, Symbol::intern("whitelisted_attr")) {
-            cx.span_lint(MISSING_WHITELISTED_ATTR, span,
-                         "Missing 'whitelisted_attr' attribute");
+        let allowed = |attr| pprust::attribute_to_string(attr).contains("allowed_attr");
+        if !item.attrs.iter().any(allowed) {
+            cx.lint(MISSING_ALLOWED_ATTR, |lint| {
+                lint.build("Missing 'allowed_attr' attribute").set_span(span).emit()
+            });
         }
     }
 }

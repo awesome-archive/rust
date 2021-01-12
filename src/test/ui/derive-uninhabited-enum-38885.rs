@@ -1,4 +1,4 @@
-// build-pass (FIXME(62277): could be check-pass?)
+// check-pass
 // compile-flags: -Wunused
 
 // ensure there are no special warnings about uninhabited types
@@ -10,7 +10,7 @@ enum Void {}
 #[derive(Debug)]
 enum Foo {
     Bar(u8),
-    Void(Void), //~ WARN never used
+    Void(Void), //~ WARN never constructed
 }
 
 fn main() {

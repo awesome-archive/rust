@@ -1,4 +1,6 @@
 // run-pass
+#![allow(overlapping_range_endpoints)]
+
 fn main() {
     let x = 'a';
 

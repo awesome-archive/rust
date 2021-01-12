@@ -1,5 +1,5 @@
 // check-pass
-#![feature(specialization)]
+#![feature(specialization)] //~ WARN the feature `specialization` is incomplete
 
 pub struct Cloned<I>(I);
 
@@ -12,6 +12,10 @@ where
 
     fn next(&mut self) -> Option<T> {
         unimplemented!()
+    }
+
+    default fn count(self) -> usize where Self: Sized {
+        self.fold(0, |cnt, _| cnt + 1)
     }
 }
 
