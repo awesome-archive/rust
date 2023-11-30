@@ -3,88 +3,77 @@
 //! This library contains the tidy lints and exposes it
 //! to be used by tools.
 
-use walkdir::{DirEntry, WalkDir};
-use std::fs::File;
-use std::io::Read;
+use termcolor::WriteColor;
 
-use std::path::Path;
-
+/// A helper macro to `unwrap` a result except also print out details like:
+///
+/// * The expression that failed
+/// * The error itself
+/// * (optionally) a path connected to the error (e.g. failure to open a file)
+#[macro_export]
 macro_rules! t {
-    ($e:expr, $p:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => panic!("{} failed on {} with {}", stringify!($e), ($p).display(), e),
-    });
+    ($e:expr, $p:expr) => {
+        match $e {
+            Ok(e) => e,
+            Err(e) => panic!("{} failed on {} with {}", stringify!($e), ($p).display(), e),
+        }
+    };
 
-    ($e:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => panic!("{} failed with {}", stringify!($e), e),
-    })
+    ($e:expr) => {
+        match $e {
+            Ok(e) => e,
+            Err(e) => panic!("{} failed with {}", stringify!($e), e),
+        }
+    };
 }
 
 macro_rules! tidy_error {
-    ($bad:expr, $fmt:expr, $($arg:tt)*) => ({
+    ($bad:expr, $($fmt:tt)*) => ({
+        $crate::tidy_error(&format_args!($($fmt)*).to_string()).expect("failed to output error");
         *$bad = true;
-        eprint!("tidy error: ");
-        eprintln!($fmt, $($arg)*);
     });
 }
 
+macro_rules! tidy_error_ext {
+    ($tidy_error:path, $bad:expr, $($fmt:tt)*) => ({
+        $tidy_error(&format_args!($($fmt)*).to_string()).expect("failed to output error");
+        *$bad = true;
+    });
+}
+
+fn tidy_error(args: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use termcolor::{Color, ColorChoice, ColorSpec, StandardStream};
+
+    let mut stderr = StandardStream::stdout(ColorChoice::Auto);
+    stderr.set_color(ColorSpec::new().set_fg(Some(Color::Red)))?;
+
+    write!(&mut stderr, "tidy error")?;
+    stderr.set_color(&ColorSpec::new())?;
+
+    writeln!(&mut stderr, ": {args}")?;
+    Ok(())
+}
+
+pub mod alphabetical;
 pub mod bins;
-pub mod style;
-pub mod errors;
-pub mod features;
-pub mod cargo;
-pub mod edition;
-pub mod pal;
+pub mod debug_artifacts;
 pub mod deps;
+pub mod edition;
+pub mod error_codes;
+pub mod ext_tool_checks;
 pub mod extdeps;
+pub mod features;
+pub mod fluent_alphabetical;
+pub mod mir_opt_tests;
+pub mod pal;
+pub mod rustdoc_css_themes;
+pub mod rustdoc_gui_tests;
+pub mod style;
+pub mod target_specific_tests;
+pub mod tests_placement;
 pub mod ui_tests;
 pub mod unit_tests;
 pub mod unstable_book;
-
-fn filter_dirs(path: &Path) -> bool {
-    let skip = [
-        "src/llvm-emscripten",
-        "src/llvm-project",
-        "src/stdarch",
-        "src/tools/cargo",
-        "src/tools/clippy",
-        "src/tools/miri",
-        "src/tools/rls",
-        "src/tools/rust-installer",
-        "src/tools/rustfmt",
-    ];
-    skip.iter().any(|p| path.ends_with(p))
-}
-
-fn walk_many(
-    paths: &[&Path], skip: &mut dyn FnMut(&Path) -> bool, f: &mut dyn FnMut(&DirEntry, &str)
-) {
-    for path in paths {
-        walk(path, skip, f);
-    }
-}
-
-fn walk(path: &Path, skip: &mut dyn FnMut(&Path) -> bool, f: &mut dyn FnMut(&DirEntry, &str)) {
-    let mut contents = String::new();
-    walk_no_read(path, skip, &mut |entry| {
-        contents.clear();
-        if t!(File::open(entry.path()), entry.path()).read_to_string(&mut contents).is_err() {
-            contents.clear();
-        }
-        f(&entry, &contents);
-    });
-}
-
-fn walk_no_read(path: &Path, skip: &mut dyn FnMut(&Path) -> bool, f: &mut dyn FnMut(&DirEntry)) {
-    let walker = WalkDir::new(path).into_iter()
-        .filter_entry(|e| !skip(e.path()));
-    for entry in walker {
-        if let Ok(entry) = entry {
-            if entry.file_type().is_dir() {
-                continue;
-            }
-            f(&entry);
-        }
-    }
-}
+pub mod walk;
+pub mod x_version;

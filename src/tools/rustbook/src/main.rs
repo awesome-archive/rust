@@ -1,98 +1,70 @@
-use clap::{crate_version};
+use clap::crate_version;
 
 use std::env;
 use std::path::{Path, PathBuf};
 
-use clap::{App, ArgMatches, SubCommand, AppSettings};
+use clap::{arg, ArgMatches, Command};
 
+use mdbook::errors::Result as Result3;
 use mdbook::MDBook;
-use mdbook::errors::{Result as Result3};
-
-#[cfg(feature = "linkcheck")]
-use mdbook::renderer::RenderContext;
-#[cfg(feature = "linkcheck")]
-use mdbook_linkcheck::{self, errors::BrokenLinks};
-use failure::Error;
 
 fn main() {
-    let d_message = "-d, --dest-dir=[dest-dir]
-'The output directory for your book{n}(Defaults to ./book when omitted)'";
-    let dir_message = "[dir]
-'A directory for your book{n}(Defaults to Current Directory when omitted)'";
+    let crate_version = concat!("v", crate_version!());
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    let d_arg = arg!(-d --"dest-dir" <DEST_DIR>
+"The output directory for your book\n(Defaults to ./book when omitted)")
+    .required(false)
+    .value_parser(clap::value_parser!(PathBuf));
 
-    let matches = App::new("rustbook")
-                    .about("Build a book with mdBook")
-                    .author("Steve Klabnik <steve@steveklabnik.com>")
-                    .version(&*format!("v{}", crate_version!()))
-                    .setting(AppSettings::SubcommandRequired)
-                    .subcommand(SubCommand::with_name("build")
-                        .about("Build the book from the markdown files")
-                        .arg_from_usage(d_message)
-                        .arg_from_usage(dir_message))
-                    .subcommand(SubCommand::with_name("linkcheck")
-                        .about("Run linkcheck with mdBook 3")
-                        .arg_from_usage(dir_message))
-                    .get_matches();
+    let dir_arg = arg!([dir] "Root directory for the book\n\
+                              (Defaults to the current directory when omitted)")
+    .value_parser(clap::value_parser!(PathBuf));
+
+    let matches = Command::new("rustbook")
+        .about("Build a book with mdBook")
+        .author("Steve Klabnik <steve@steveklabnik.com>")
+        .version(crate_version)
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .subcommand(
+            Command::new("build")
+                .about("Build the book from the markdown files")
+                .arg(d_arg)
+                .arg(&dir_arg),
+        )
+        .subcommand(
+            Command::new("test")
+                .about("Tests that a book's Rust code samples compile")
+                .arg(dir_arg),
+        )
+        .get_matches();
 
     // Check which subcomamnd the user ran...
     match matches.subcommand() {
-        ("build", Some(sub_matches)) => {
+        Some(("build", sub_matches)) => {
             if let Err(e) = build(sub_matches) {
-                eprintln!("Error: {}", e);
-
-                for cause in e.iter().skip(1) {
-                    eprintln!("\tCaused By: {}", cause);
-                }
-
-                ::std::process::exit(101);
+                handle_error(e);
             }
-        },
-        ("linkcheck", Some(sub_matches)) => {
-            if let Err(err) = linkcheck(sub_matches) {
-                eprintln!("Error: {}", err);
-
-                #[cfg(feature = "linkcheck")]
-                {
-                    if let Ok(broken_links) = err.downcast::<BrokenLinks>() {
-                        for cause in broken_links.links().iter() {
-                            eprintln!("\tCaused By: {}", cause);
-                        }
-                    }
-                }
-
-                ::std::process::exit(101);
+        }
+        Some(("test", sub_matches)) => {
+            if let Err(e) = test(sub_matches) {
+                handle_error(e);
             }
-        },
-        (_, _) => unreachable!(),
+        }
+        _ => unreachable!(),
     };
 }
 
-#[cfg(feature = "linkcheck")]
-pub fn linkcheck(args: &ArgMatches<'_>) -> Result<(), Error> {
-    let book_dir = get_book_dir(args);
-    let book = MDBook::load(&book_dir).unwrap();
-    let cfg = book.config;
-    let render_ctx = RenderContext::new(&book_dir, book.book, cfg, &book_dir);
-
-    mdbook_linkcheck::check_links(&render_ctx)
-}
-
-#[cfg(not(feature = "linkcheck"))]
-pub fn linkcheck(_args: &ArgMatches<'_>) -> Result<(), Error> {
-    println!("mdbook-linkcheck is disabled.");
-    Ok(())
-}
-
 // Build command implementation
-pub fn build(args: &ArgMatches<'_>) -> Result3<()> {
+pub fn build(args: &ArgMatches) -> Result3<()> {
     let book_dir = get_book_dir(args);
-    let mut book = MDBook::load(&book_dir)?;
+    let mut book = load_book(&book_dir)?;
 
     // Set this to allow us to catch bugs in advance.
     book.config.build.create_missing = false;
 
-    if let Some(dest_dir) = args.value_of("dest-dir") {
-        book.config.build.build_dir = PathBuf::from(dest_dir);
+    if let Some(dest_dir) = args.get_one::<PathBuf>("dest-dir") {
+        book.config.build.build_dir = dest_dir.into();
     }
 
     book.build()?;
@@ -100,16 +72,33 @@ pub fn build(args: &ArgMatches<'_>) -> Result3<()> {
     Ok(())
 }
 
-fn get_book_dir(args: &ArgMatches<'_>) -> PathBuf {
-    if let Some(dir) = args.value_of("dir") {
+fn test(args: &ArgMatches) -> Result3<()> {
+    let book_dir = get_book_dir(args);
+    let mut book = load_book(&book_dir)?;
+    book.test(vec![])
+}
+
+fn get_book_dir(args: &ArgMatches) -> PathBuf {
+    if let Some(p) = args.get_one::<PathBuf>("dir") {
         // Check if path is relative from current dir, or absolute...
-        let p = Path::new(dir);
-        if p.is_relative() {
-            env::current_dir().unwrap().join(dir)
-        } else {
-            p.to_path_buf()
-        }
+        if p.is_relative() { env::current_dir().unwrap().join(p) } else { p.to_path_buf() }
     } else {
         env::current_dir().unwrap()
     }
+}
+
+fn load_book(book_dir: &Path) -> Result3<MDBook> {
+    let mut book = MDBook::load(book_dir)?;
+    book.config.set("output.html.input-404", "").unwrap();
+    Ok(book)
+}
+
+fn handle_error(error: mdbook::errors::Error) -> ! {
+    eprintln!("Error: {}", error);
+
+    for cause in error.chain().skip(1) {
+        eprintln!("\tCaused By: {}", cause);
+    }
+
+    ::std::process::exit(101);
 }

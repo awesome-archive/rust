@@ -5,10 +5,31 @@ set -e
 export MSYS_NO_PATHCONV=1
 
 script=`cd $(dirname $0) && pwd`/`basename $0`
-image=$1
 
-docker_dir="`dirname $script`"
-ci_dir="`dirname $docker_dir`"
+image=""
+dev=0
+
+while [[ $# -gt 0 ]]
+do
+  case "$1" in
+    --dev)
+      dev=1
+      ;;
+    *)
+      if [ -n "$image" ]
+      then
+        echo "expected single argument for the image name"
+        exit 1
+      fi
+      image="$1"
+      ;;
+  esac
+  shift
+done
+
+script_dir="`dirname $script`"
+docker_dir="${script_dir}/host-$(uname -m)"
+ci_dir="`dirname $script_dir`"
 src_dir="`dirname $ci_dir`"
 root_dir="`dirname $src_dir`"
 
@@ -16,6 +37,8 @@ objdir=$root_dir/obj
 dist=$objdir/build/dist
 
 source "$ci_dir/shared.sh"
+
+CACHE_DOMAIN="${CACHE_DOMAIN:-ci-caches.rust-lang.org}"
 
 if [ -f "$docker_dir/$image/Dockerfile" ]; then
     if [ "$CI" != "" ]; then
@@ -27,50 +50,78 @@ if [ -f "$docker_dir/$image/Dockerfile" ]; then
       # Look for all source files involves in the COPY command
       copied_files=/tmp/.docker-copied-files.txt
       rm -f "$copied_files"
-      for i in $(sed -n -e 's/^COPY \(.*\) .*$/\1/p' "$docker_dir/$image/Dockerfile"); do
+      for i in $(sed -n -e '/^COPY --from=/! s/^COPY \(.*\) .*$/\1/p' \
+          "$docker_dir/$image/Dockerfile"); do
         # List the file names
-        find "$docker_dir/$i" -type f >> $copied_files
+        find "$script_dir/$i" -type f >> $copied_files
       done
       # Sort the file names and cat the content into the hash key
       sort $copied_files | xargs cat >> $hash_key
 
+      # Include the architecture in the hash key, since our Linux CI does not
+      # only run in x86_64 machines.
+      uname -m >> $hash_key
+
       docker --version >> $hash_key
+
+      # Include cache version. Can be used to manually bust the Docker cache.
+      echo "2" >> $hash_key
+
       cksum=$(sha512sum $hash_key | \
         awk '{print $1}')
 
-      s3url="s3://$SCCACHE_BUCKET/docker/$cksum"
-      url="https://$SCCACHE_BUCKET.s3.amazonaws.com/docker/$cksum"
-      upload="aws s3 cp - $s3url"
+      url="https://$CACHE_DOMAIN/docker/$cksum"
 
       echo "Attempting to download $url"
       rm -f /tmp/rustci_docker_cache
       set +e
-      retry curl -y 30 -Y 10 --connect-timeout 30 -f -L -C - -o /tmp/rustci_docker_cache "$url"
-      loaded_images=$(docker load -i /tmp/rustci_docker_cache | sed 's/.* sha/sha/')
+      retry curl --max-time 600 -y 30 -Y 10 --connect-timeout 30 -f -L -C - \
+        -o /tmp/rustci_docker_cache "$url"
+
+      docker_archive_hash=$(sha512sum /tmp/rustci_docker_cache | awk '{print $1}')
+      echo "Downloaded archive hash: ${docker_archive_hash}"
+
+      echo "Loading images into docker"
+      # docker load sometimes hangs in the CI, so time out after 10 minutes with TERM,
+      # KILL after 12 minutes
+      loaded_images=$(/usr/bin/timeout -k 720 600 docker load -i /tmp/rustci_docker_cache \
+        | sed 's/.* sha/sha/')
       set -e
-      echo "Downloaded containers:\n$loaded_images"
+      printf "Downloaded containers:\n$loaded_images\n"
     fi
 
     dockerfile="$docker_dir/$image/Dockerfile"
     if [ -x /usr/bin/cygpath ]; then
-        context="`cygpath -w $docker_dir`"
+        context="`cygpath -w $script_dir`"
         dockerfile="`cygpath -w $dockerfile`"
     else
-        context="$docker_dir"
+        context="$script_dir"
     fi
+    echo "::group::Building docker image for $image"
+
+    # As of August 2023, Github Actions have updated Docker to 23.X,
+    # which uses the BuildKit by default. It currently throws aways all
+    # intermediate layers, which breaks our usage of S3 layer caching.
+    # Therefore we opt-in to the old build backend for now.
+    export DOCKER_BUILDKIT=0
     retry docker \
       build \
       --rm \
       -t rust-ci \
       -f "$dockerfile" \
       "$context"
+    echo "::endgroup::"
 
-    if [ "$upload" != "" ]; then
+    if [ "$CI" != "" ]; then
+      s3url="s3://$SCCACHE_BUCKET/docker/$cksum"
+      upload="aws s3 cp - $s3url"
       digest=$(docker inspect rust-ci --format '{{.Id}}')
       echo "Built container $digest"
       if ! grep -q "$digest" <(echo "$loaded_images"); then
-        echo "Uploading finished image to $url"
+        echo "Uploading finished image $digest to $url"
         set +e
+        # Print image history for easier debugging of layer SHAs
+        docker history rust-ci
         docker history -q rust-ci | \
           grep -v missing | \
           xargs docker save | \
@@ -85,6 +136,7 @@ if [ -f "$docker_dir/$image/Dockerfile" ]; then
       mkdir -p "$dist"
       echo "$url" >"$info"
       echo "$digest" >>"$info"
+      cat "$info"
     fi
 elif [ -f "$docker_dir/disabled/$image/Dockerfile" ]; then
     if isCI; then
@@ -92,20 +144,43 @@ elif [ -f "$docker_dir/disabled/$image/Dockerfile" ]; then
         exit 1
     fi
     # Transform changes the context of disabled Dockerfiles to match the enabled ones
-    tar --transform 's#^./disabled/#./#' -C $docker_dir -c . | docker \
+    tar --transform 's#disabled/#./#' -C $script_dir -c . | docker \
       build \
       --rm \
       -t rust-ci \
-      -f "$image/Dockerfile" \
+      -f "host-$(uname -m)/$image/Dockerfile" \
       -
 else
     echo Invalid image: $image
+
+    # Check whether the image exists for other architectures
+    for arch_dir in "${script_dir}"/host-*; do
+        # Avoid checking non-directories and the current host architecture directory
+        if ! [[ -d "${arch_dir}" ]]; then
+            continue
+        fi
+        if [[ "${arch_dir}" = "${docker_dir}" ]]; then
+            continue
+        fi
+
+        arch_name="$(basename "${arch_dir}" | sed 's/^host-//')"
+        if [[ -f "${arch_dir}/${image}/Dockerfile" ]]; then
+            echo "Note: the image exists for the ${arch_name} host architecture"
+        elif [[ -f "${arch_dir}/disabled/${image}/Dockerfile" ]]; then
+            echo "Note: the disabled image exists for the ${arch_name} host architecture"
+        else
+            continue
+        fi
+        echo "Note: the current host architecture is $(uname -m)"
+    done
+
     exit 1
 fi
 
 mkdir -p $HOME/.cargo
 mkdir -p $objdir/tmp
 mkdir -p $objdir/cores
+mkdir -p /tmp/toolstate
 
 args=
 if [ "$SCCACHE_BUCKET" != "" ]; then
@@ -113,6 +188,7 @@ if [ "$SCCACHE_BUCKET" != "" ]; then
     args="$args --env SCCACHE_REGION"
     args="$args --env AWS_ACCESS_KEY_ID"
     args="$args --env AWS_SECRET_ACCESS_KEY"
+    args="$args --env AWS_REGION"
 else
     mkdir -p $HOME/.cache/sccache
     args="$args --env SCCACHE_DIR=/sccache --volume $HOME/.cache/sccache:/sccache"
@@ -156,28 +232,83 @@ else
   args="$args --volume $objdir:/checkout/obj"
   args="$args --volume $HOME/.cargo:/cargo"
   args="$args --volume $HOME/rustsrc:$HOME/rustsrc"
-  args="$args --env LOCAL_USER_ID=`id -u`"
+  args="$args --volume /tmp/toolstate:/tmp/toolstate"
+
+  id=$(id -u)
+  if [[ "$id" != 0 && "$(docker version)" =~ Podman ]]; then
+    # Rootless podman creates a separate user namespace, where an inner
+    # LOCAL_USER_ID will map to a different subuid range on the host.
+    # The "keep-id" mode maps the current UID directly into the container.
+    args="$args --env NO_CHANGE_USER=1 --userns=keep-id"
+  else
+    args="$args --env LOCAL_USER_ID=$id"
+  fi
+fi
+
+if [ "$dev" = "1" ]
+then
+  # Interactive + TTY
+  args="$args -it"
+  command="/bin/bash"
+else
+  command="/checkout/src/ci/run.sh"
+fi
+
+if [ "$CI" != "" ]; then
+  # Get some needed information for $BASE_COMMIT
+  #
+  # This command gets the last merge commit which we'll use as base to list
+  # deleted files since then.
+  BASE_COMMIT="$(git log --author=bors@rust-lang.org -n 2 --pretty=format:%H | tail -n 1)"
+else
+  BASE_COMMIT=""
+fi
+
+SUMMARY_FILE=github-summary.md
+touch $objdir/${SUMMARY_FILE}
+
+extra_env=""
+if [ "$ENABLE_GCC_CODEGEN" = "1" ]; then
+  extra_env="$EXTRA_ENV --env ENABLE_GCC_CODEGEN=1"
+  # If `ENABLE_GCC_CODEGEN` is set and not empty, we add the `--enable-new-symbol-mangling`
+  # argument to `RUST_CONFIGURE_ARGS` and set the `GCC_EXEC_PREFIX` environment variable.
+  # `cg_gcc` doesn't support the legacy mangling so we need to enforce the new one
+  # if we run `cg_gcc` tests.
+  extra_env="$EXTRA_ENV --env USE_NEW_MANGLING=--enable-new-symbol-mangling"
+  # Fix rustc_codegen_gcc lto issues.
+  extra_env="$EXTRA_ENV --env GCC_EXEC_PREFIX=/usr/lib/gcc/"
+  echo "Setting extra environment values for docker: $extra_env"
 fi
 
 docker \
   run \
   --workdir /checkout/obj \
   --env SRC=/checkout \
+  $extra_env \
   $args \
   --env CARGO_HOME=/cargo \
   --env DEPLOY \
   --env DEPLOY_ALT \
   --env CI \
-  --env TF_BUILD \
-  --env BUILD_SOURCEBRANCHNAME \
+  --env GITHUB_ACTIONS \
+  --env GITHUB_REF \
+  --env GITHUB_STEP_SUMMARY="/checkout/obj/${SUMMARY_FILE}" \
   --env TOOLSTATE_REPO_ACCESS_TOKEN \
   --env TOOLSTATE_REPO \
   --env TOOLSTATE_PUBLISH \
+  --env RUST_CI_OVERRIDE_RELEASE_CHANNEL \
   --env CI_JOB_NAME="${CI_JOB_NAME-$IMAGE}" \
+  --env BASE_COMMIT="$BASE_COMMIT" \
+  --env DIST_TRY_BUILD \
+  --env PR_CI_JOB \
+  --env OBJDIR_ON_HOST="$objdir" \
+  --env CODEGEN_BACKENDS \
   --init \
   --rm \
   rust-ci \
-  /checkout/src/ci/run.sh
+  $command
+
+cat $objdir/${SUMMARY_FILE} >> "${GITHUB_STEP_SUMMARY}"
 
 if [ -f /.dockerenv ]; then
   rm -rf $objdir

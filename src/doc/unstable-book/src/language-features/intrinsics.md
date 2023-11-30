@@ -17,14 +17,14 @@ via a declaration like
 
 ```rust
 #![feature(intrinsics)]
+#![allow(internal_features)]
 # fn main() {}
 
 extern "rust-intrinsic" {
     fn transmute<T, U>(x: T) -> U;
 
-    fn offset<T>(dst: *const T, offset: isize) -> *const T;
+    fn arith_offset<T>(dst: *const T, offset: isize) -> *const T;
 }
 ```
 
 As with any other FFI functions, these are always `unsafe` to call.
-

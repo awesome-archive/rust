@@ -1,4 +1,4 @@
-# Profile Guided Optimization
+# Profile-guided Optimization
 
 `rustc` supports doing profile-guided optimization (PGO).
 This chapter describes what PGO is, what it is good for, and how it can be used.
@@ -125,6 +125,17 @@ RUSTFLAGS="-Cprofile-use=/tmp/pgo-data/merged.profdata" \
     cargo build --release --target=x86_64-unknown-linux-gnu
 ```
 
+### Troubleshooting
+
+- It is recommended to pass `-Cllvm-args=-pgo-warn-missing-function` during the
+  `-Cprofile-use` phase. LLVM by default does not warn if it cannot find
+  profiling data for a given function. Enabling this warning will make it
+  easier to spot errors in your setup.
+
+- There is a [known issue](https://github.com/rust-lang/cargo/issues/7416) in
+  Cargo prior to version 1.39 that will prevent PGO from working correctly. Be
+  sure to use Cargo 1.39 or newer when doing PGO.
+
 ## Further Reading
 
 `rustc`'s PGO support relies entirely on LLVM's implementation of the feature
@@ -134,3 +145,26 @@ in Clang's documentation is therefore an interesting read for anyone who wants
 to use PGO with Rust.
 
 [clang-pgo]: https://clang.llvm.org/docs/UsersManual.html#profile-guided-optimization
+
+## Community Maintained Tools
+
+As an alternative to directly using the compiler for Profile-Guided Optimization,
+you may choose to go with `cargo-pgo`, which has an intuitive command-line API
+and saves you the trouble of doing all the manual work. You can read more about
+it in their repository accessible from this link: https://github.com/Kobzol/cargo-pgo
+
+For the sake of completeness, here are the corresponding steps using `cargo-pgo`:
+
+```bash
+# Install if you haven't already
+cargo install cargo-pgo
+
+cargo pgo build
+cargo pgo optimize
+```
+
+These steps will do the following just as before:
+
+1. Build an instrumented binary from the source code.
+2. Run the instrumented binary to gather PGO profiles.
+3. Use the gathered PGO profiles from the last step to build an optimized binary.
